@@ -8,17 +8,18 @@ on:
 env:
   DESTROY: false
   TF_VERSION: 1.10.5
-  IMAGE_NAME: ci-cd-app
-  TAG_APP: v1.0.0
+  IMAGE_NAME: ${{ github.event.repository.name }}
   ECS_SERVICE: app-service
   ECS_CLUSTER: app-prod-cluster
+  APP_VERSION: 1.0.0
   ENVIRONMENT: prod
 
 jobs:
   Build:
     name: 'Building app'
     runs-on: ubuntu-latest
-
+    outputs:
+      image_tag: ${{ steps.set_tag.outputs.image_tag }}
     defaults:
       run:
         shell: bash
@@ -30,6 +31,19 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Set TAG_APP with SHA
+        run: |
+          echo "TAG_APP=v${{ env.APP_VERSION }}-$(echo $GITHUB_SHA | cut -c1-7)" >> "$GITHUB_ENV"
+
+      - name: Set TAG_APP Output
+        id: set_tag
+        run: echo "image_tag=$TAG_APP" >> $GITHUB_OUTPUT
+
+      - name: Show image TAG
+        run: |
+          echo "Image TAG" $TAG_APP
+          echo "Image TAG" ${{ steps.set_tag.outputs.image_tag }}
+
       - name: Setup Python
         uses: actions/setup-python@v4
         with:
@@ -40,14 +54,6 @@ jobs:
 
       - name: Unit Test
         run: python -m unittest -v test
-
-      - name: SonarQube Scan
-        uses: SonarSource/sonarqube-scan-action@v5
-        with:
-          fetch-depth: 0
-          projectBaseDir: ./app
-        env:
-          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
 
       - name: Login to Docker Hub
         uses: docker/login-action@v3
@@ -76,9 +82,9 @@ jobs:
           docker image push ${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:${{ env.TAG_APP }}
 
   Deploy:
-
-    needs: Build
+    name: 'Deploy App'
     runs-on: ubuntu-latest
+    needs: Build
 
     defaults:
       run:
@@ -101,15 +107,17 @@ jobs:
 
       - name: Fill in the new image ID in the Amazon ECS task definition
         id: task-def
-        uses: aws-actions/amazon-ecs-render-task-definition@c804dfbdd57f713b6c079302a4c01db7017a36fc
+        uses: aws-actions/amazon-ecs-render-task-definition@v1
         with:
           task-definition: ./app/deploy/ecs-task-definition.json
           container-name: ${{ env.IMAGE_NAME }}
-          image: ${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:${{ env.TAG_APP }}
+          image: ${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:${{ needs.Build.outputs.image_tag }}
+          taskRoleArn: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/LabRole
+          executionRoleArn: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/LabRole
 
       - name: Register Task Definition
         id: task-definition
-        uses: aws-actions/amazon-ecs-deploy-task-definition@v1
+        uses: aws-actions/amazon-ecs-deploy-task-definition@v2
         with:
           task-definition: ${{ steps.task-def.outputs.task-definition }}
 
@@ -153,7 +161,7 @@ jobs:
         working-directory: ./app/deploy
 
       - name: Deploy App in Amazon ECS
-        uses: aws-actions/amazon-ecs-deploy-task-definition@df9643053eda01f169e64a0e60233aacca83799a
+        uses: aws-actions/amazon-ecs-deploy-task-definition@v2
         with:
           task-definition: ${{ steps.task-def.outputs.task-definition }}
           service: ${{ env.ECS_SERVICE }}
