@@ -109,7 +109,7 @@ jobs:
         id: task-def
         uses: aws-actions/amazon-ecs-render-task-definition@v1
         with:
-          task-definition: ./app/deploy/ecs-task-definition.json
+          task-definition: deploy/ecs-task-definition.json
           container-name: ${{ env.IMAGE_NAME }}
           image: ${{ secrets.DOCKERHUB_USERNAME }}/${{ env.IMAGE_NAME }}:${{ needs.Build.outputs.image_tag }}
           taskRoleArn: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/LabRole
